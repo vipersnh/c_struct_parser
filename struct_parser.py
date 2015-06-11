@@ -2,20 +2,20 @@ import os
 import re
 from pdb import set_trace
 from pycparser import parse_file, c_parser, c_generator
-from pycparser.c_ast import (Typedef, TypeDecl, Typename, Struct, 
+from pycparser.c_ast import (Typedef, TypeDecl, Typename, Struct, Enum,
     Union, IdentifierType, Enum, PtrDecl)
 from collections import namedtuple
-from enum import Enum
+import enum
 
-class arch_types_enum_t(Enum):
+class arch_types_enum_t(enum.Enum):
     M32 = 0
     M64 = 1
 
-class endian_types_enum_t(Enum):
+class endian_types_enum_t(enum.Enum):
     LittleEndian=0
     BigEndian=0
 
-class type_t(Enum):
+class type_t(enum.Enum):
     default = 0
     pointer = 1
     typedec = 2
@@ -26,7 +26,6 @@ class type_t(Enum):
 
 type_info_t = namedtuple("type_info_t", ["type_id", "name", "size", "info", "field_name"])
 ptr_info_t  = namedtuple("ptr_info_t", ["actual_type"])
-typedec_info_t = namedtuple("typedec_info_t", ["actual_type"])
 typedef_info_t = namedtuple("typedef_info_t", ["actual_type"])
 enum_info_t   = namedtuple("enum_info_t", ["enum_dict"])
 struct_info_t = namedtuple("struct_info_t", ["fields"])
@@ -94,7 +93,29 @@ class struct_parser_t:
             size = t_obj.size
             return form_type_info(type_id, name, size, info)
         elif type(ext)==TypeDecl:
-            if self.isKnownType(ext.declname):
+            if type(ext.type)==Enum:
+                set_trace();
+                pass;
+            elif type(ext.type)==IdentifierType:
+                type_name = " ".join(ext.type.names)
+                if self.isKnownType(type_name):
+                    return self.parser_types[type_name]
+                else:
+                    assert 0, "Unknown type"
+            elif type(ext.type)==Struct:
+                if self.isKnownType(ext.type.name):
+                    return self.parser_types[type_name]
+                else:
+                    type_id = type_t.struct;
+                    if ext.type.decls:
+                        #TODO, populate declarations into structure
+                        pass
+                    else:
+                        # Create empty structure info parsed_types and return it;
+                        self.parser_types[ext.type.name] = form_type_info(type_t.struct,
+                            ext.type.name, None, None);
+                    return self.parser_types[ext.type.name];
+            elif self.isKnownType(ext.declname):
                 t_obj = self.parser_types[ext.declname]
             else:
                 t_obj = self.get_type_info(ext.type)
@@ -107,21 +128,17 @@ class struct_parser_t:
                 set_trace()
                 pass
             return form_type_info(type_id, name, size, info)
-        elif type(ext)==IdentifierType:
-            type_name = " ".join(ext.names)
-            if self.isKnownType(type_name):
-                t_obj = self.parser_types[type_name];
-                return t_obj;
-            else:
-                set_trace();
-                assert 0, "Unknown type"
         elif type(ext)==PtrDecl:
-            t_obj = self.get_type_info(ext.type);
-            type_id = type_t.pointer;
-            name = t_obj.name;
-            size = 8 if self.arch==arch_types_enum_t.M64 else 4;
-            info = ptr_info_t(t_obj);
-            return form_type_info(type_id, name, size, info);
+            t_obj = self.get_type_info(ext.type)
+            type_id = type_t.pointer
+            name = t_obj.name
+            size = 8 if self.arch==arch_types_enum_t.M64 else 4
+            info = ptr_info_t(t_obj)
+            return form_type_info(type_id, name, size, info)
+        else:
+            set_trace();
+            assert 0, "Code this condition"
+
     def isKnownType(self, type_name):
         if type_name in self.parser_types.keys():
             return True
