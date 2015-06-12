@@ -11,6 +11,14 @@ typedef enum {
     FAILURE,
 } test_enum_t;
 
+//typedef struct {
+//    char a;
+//    unsigned long long b;
+//    char c;
+//    long double d;
+//    char e;
+//} test_struct_t;
+
 typedef struct test_complex_struct {
     uint32 a;
     uint64 b[3];
@@ -20,3 +28,5 @@ typedef struct test_complex_struct {
     test_type f[0];
     test_type g[];
 } test_complex_struct;
+
+

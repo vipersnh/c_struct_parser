@@ -28,7 +28,7 @@ class type_t(enum.Enum):
     struct = 6
     union = 7
 
-type_info_t = namedtuple("type_info_t", ["type_id", "name", "size", "info"])
+type_info_t = namedtuple("type_info_t", ["type_id", "name", "size", "align", "info"])
 array_info_t = namedtuple("array_into_t", ["array_count", "array_type"]);
 ptr_info_t  = namedtuple("ptr_info_t", ["actual_type"])
 typedef_info_t = namedtuple("typedef_info_t", ["actual_type"])
@@ -36,10 +36,12 @@ enum_info_t   = namedtuple("enum_info_t", ["enum_dict"])
 struct_info_t = namedtuple("struct_info_t", ["fields"])
 union_info_t  = namedtuple("union_info_t", ["fields"])
 
-field_into_t = namedtuple("field_into_t", ["var_name", "size", "type"]);
+field_into_t = namedtuple("field_into_t", ["var_name", "size", "byte_offset", "type"]);
 
-def form_type_info(type_info_type, name, size, info=None, ):
-    return type_info_t(type_info_type, name, size, info)
+def form_type_info(type_info_type, name, size, align=None, info=None, ):
+    return type_info_t(type_info_type, name, size, 
+            size if align==None else align, 
+            info)
     
 class struct_parser_t:
     parser_types = OrderedDict()
@@ -50,6 +52,7 @@ class struct_parser_t:
         self.is_64bit = self.arch==arch_types_enum_t.M64
         self.is_32bit = self.arch==arch_types_enum_t.M32
         self.word_size = 4 if self.arch==arch_types_enum_t.M32 else 8
+        self.max_align = self.word_size
         self.endian = endian
         self.__update_basic_types__()
         self.ast = parse_file(c_file, use_cpp=True)
@@ -90,8 +93,8 @@ class struct_parser_t:
         self.parser_types["signed long long"] = form_type_info(type_t.default, "signed long long", 8)
         self.parser_types["unsigned long long"] = form_type_info(type_t.default, "unsigned long long", 8)
         self.parser_types["float"] = form_type_info(type_t.default, "float", 4)
-        self.parser_types["double"] = form_type_info(type_t.default, "double", 8)
-        self.parser_types["long double"] = form_type_info(type_t.default, "long double", 10)
+        self.parser_types["double"] = form_type_info(type_t.default, "double", 8, align=4)
+        self.parser_types["long double"] = form_type_info(type_t.default, "long double", 12, align=4)
         
 
     def get_type_info(self, ext):
@@ -109,7 +112,7 @@ class struct_parser_t:
             except:
                 set_trace()
             size = t_obj.size
-            return form_type_info(type_id, name, size, info)
+            return form_type_info(type_id, name, size, None, info)
         elif type(ext)==TypeDecl:
             if type(ext.type)==Enum:
                 enumList = ext.type.values.enumerators
@@ -121,7 +124,7 @@ class struct_parser_t:
                     enum_dict[item.name] = enum_val
                     enum_val += 1
                 return form_type_info(type_t.enum, ext.declname, self.parser_types["enum"].size,
-                        enum_info_t(enum_dict))
+                        None, enum_info_t(enum_dict))
             elif type(ext.type)==IdentifierType:
                 type_name = " ".join(ext.type.names)
                 if self.isKnownType(type_name):
@@ -135,20 +138,27 @@ class struct_parser_t:
                     type_id = type_t.struct;
                     if ext.type.decls:
                         fields = []
+                        offset = 0
+                        total_size = 0
                         for decl in ext.type.decls:
                             t_obj = self.get_type_info(decl.type)
-                            field = field_into_t(decl.name, t_obj.size, t_obj)
+                            while t_obj.size:
+                                if ((offset % t_obj.align) == 0) or ((offset % self.max_align) == 0):
+                                    byte_offset = offset
+                                    break
+                                else:
+                                    offset += 1 # Increment by byte wise
+                            offset += t_obj.size
+                            field = field_into_t(decl.name, t_obj.size, byte_offset, t_obj)
                             fields.append(field)
                         
-                        # Determine structure size 
-                        total_size = 0, offset = 0
-                        for idx, field in enumerate(fields):
-                                                       
-                                
-
-
+                        if offset % self.word_size==0:
+                            total_size = offset
+                        else:
+                            rem_bytes = self.word_size - (offset % self.word_size)
+                            total_size = offset + rem_bytes
                         self.parser_types[ext.type.name] = form_type_info(type_t.struct,
-                            ext.type.name, total_size, struct_info_t(fields))
+                            ext.type.name, total_size, None, struct_info_t(fields))
                     else:
                         # Create empty structure info parsed_types and return it;
                         self.parser_types[ext.type.name] = form_type_info(type_t.struct,
@@ -166,23 +176,22 @@ class struct_parser_t:
             except:
                 set_trace()
                 pass
-            return form_type_info(type_id, name, size, info)
+            return form_type_info(type_id, name, size, None, info)
         elif type(ext)==PtrDecl:
             t_obj = self.get_type_info(ext.type)
             type_id = type_t.pointer
             name = t_obj.name
             size = 8 if self.arch==arch_types_enum_t.M64 else 4
             info = ptr_info_t(t_obj)
-            return form_type_info(type_id, name, size, info)
+            return form_type_info(type_id, name, size, None, info)
         elif type(ext)==ArrayDecl:
-            array_count = None;
+            array_count = 0;
             if ext.dim:
                 array_count = int(ext.dim.value, 0)
             array_type = self.get_type_info(ext.type)
             size = array_type.size
-            if array_count:
-                size *= array_count
-            return form_type_info(type_t.array, "", size, array_info_t(array_count, array_type))
+            size *= array_count
+            return form_type_info(type_t.array, "", size, None, array_info_t(array_count, array_type))
         else:
             set_trace();
             assert 0, "Code this condition"
