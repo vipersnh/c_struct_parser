@@ -1,11 +1,14 @@
 import os
 import re
+import pprint
 from pdb import set_trace
 from pycparser import parse_file, c_parser, c_generator
 from pycparser.c_ast import (Typedef, TypeDecl, Typename, Struct, Enum,
-    Union, IdentifierType, Enum, PtrDecl)
-from collections import namedtuple
+    Union, IdentifierType, Enum, PtrDecl, ArrayDecl)
+from collections import namedtuple, OrderedDict
 import enum
+
+pp = pprint.PrettyPrinter(indent=4)
 
 class arch_types_enum_t(enum.Enum):
     M32 = 0
@@ -17,41 +20,56 @@ class endian_types_enum_t(enum.Enum):
 
 class type_t(enum.Enum):
     default = 0
-    pointer = 1
-    typedec = 2
-    typedef = 3
-    enum = 4
-    struct = 5
-    union = 6
+    array = 1
+    pointer = 2
+    typedec = 3
+    typedef = 4
+    enum = 5
+    struct = 6
+    union = 7
 
-type_info_t = namedtuple("type_info_t", ["type_id", "name", "size", "info", "field_name"])
+type_info_t = namedtuple("type_info_t", ["type_id", "name", "size", "info"])
+array_info_t = namedtuple("array_into_t", ["array_count", "array_type"]);
 ptr_info_t  = namedtuple("ptr_info_t", ["actual_type"])
 typedef_info_t = namedtuple("typedef_info_t", ["actual_type"])
 enum_info_t   = namedtuple("enum_info_t", ["enum_dict"])
 struct_info_t = namedtuple("struct_info_t", ["fields"])
 union_info_t  = namedtuple("union_info_t", ["fields"])
 
+field_into_t = namedtuple("field_into_t", ["var_name", "size", "type"]);
 
-def form_type_info(type_info_type, name, size, info=None, field_name=None):
-    return type_info_t(type_info_type, name, size, info, field_name)
+def form_type_info(type_info_type, name, size, info=None, ):
+    return type_info_t(type_info_type, name, size, info)
     
-
 class struct_parser_t:
-    parser_types = {}
+    parser_types = OrderedDict()
     def __init__(self, c_file, arch=arch_types_enum_t.M32,
             endian=endian_types_enum_t.LittleEndian):
         self.c_file = c_file
         self.arch   = arch
+        self.is_64bit = self.arch==arch_types_enum_t.M64
+        self.is_32bit = self.arch==arch_types_enum_t.M32
+        self.word_size = 4 if self.arch==arch_types_enum_t.M32 else 8
         self.endian = endian
         self.__update_basic_types__()
         self.ast = parse_file(c_file, use_cpp=True)
         for ext in self.ast.ext:
             t_obj = self.get_type_info(ext)
-            self.parser_types[t_obj.name] = t_obj;
+            self.parser_types[t_obj.name] = t_obj
+        pp.pprint(self.parser_types)
+        set_trace()
+    
+    def isWordAligned(self, num):
+        return num % self.word
+
+    def wordBytesLeft(self, offset):
+        offset = offset % self.word
+        return self.word - offset
 
     def __update_basic_types__(self):
         is_64bit = True if self.arch==arch_types_enum_t.M64 else False
         self.parser_types["__ptr__"] = form_type_info(type_t.default, "__ptr__", 8 if is_64bit else 4)
+        self.parser_types["enum"] = form_type_info(type_t.default, "enum", 4) # Check this later
         self.parser_types["void"] = form_type_info(type_t.default, "void", 0)
         self.parser_types["char"] = form_type_info(type_t.default, "char", 1)
         self.parser_types["signed char"] = form_type_info(type_t.default, "signed char", 1)
@@ -94,8 +112,16 @@ class struct_parser_t:
             return form_type_info(type_id, name, size, info)
         elif type(ext)==TypeDecl:
             if type(ext.type)==Enum:
-                set_trace();
-                pass;
+                enumList = ext.type.values.enumerators
+                enum_dict = OrderedDict()
+                enum_val  = 0;
+                for item in enumList:
+                    if item.value:
+                        enum_val = int(item.value.value, 0)
+                    enum_dict[item.name] = enum_val
+                    enum_val += 1
+                return form_type_info(type_t.enum, ext.declname, self.parser_types["enum"].size,
+                        enum_info_t(enum_dict))
             elif type(ext.type)==IdentifierType:
                 type_name = " ".join(ext.type.names)
                 if self.isKnownType(type_name):
@@ -108,8 +134,21 @@ class struct_parser_t:
                 else:
                     type_id = type_t.struct;
                     if ext.type.decls:
-                        #TODO, populate declarations into structure
-                        pass
+                        fields = []
+                        for decl in ext.type.decls:
+                            t_obj = self.get_type_info(decl.type)
+                            field = field_into_t(decl.name, t_obj.size, t_obj)
+                            fields.append(field)
+                        
+                        # Determine structure size 
+                        total_size = 0, offset = 0
+                        for idx, field in enumerate(fields):
+                                                       
+                                
+
+
+                        self.parser_types[ext.type.name] = form_type_info(type_t.struct,
+                            ext.type.name, total_size, struct_info_t(fields))
                     else:
                         # Create empty structure info parsed_types and return it;
                         self.parser_types[ext.type.name] = form_type_info(type_t.struct,
@@ -135,6 +174,15 @@ class struct_parser_t:
             size = 8 if self.arch==arch_types_enum_t.M64 else 4
             info = ptr_info_t(t_obj)
             return form_type_info(type_id, name, size, info)
+        elif type(ext)==ArrayDecl:
+            array_count = None;
+            if ext.dim:
+                array_count = int(ext.dim.value, 0)
+            array_type = self.get_type_info(ext.type)
+            size = array_type.size
+            if array_count:
+                size *= array_count
+            return form_type_info(type_t.array, "", size, array_info_t(array_count, array_type))
         else:
             set_trace();
             assert 0, "Code this condition"
