@@ -6,19 +6,19 @@ from pycparser import parse_file, c_parser, c_generator
 from pycparser.c_ast import (Typedef, TypeDecl, Typename, Struct, Enum, Constant, 
         ID, NamedInitializer, Decl, UnaryOp, Union, IdentifierType, Enum, PtrDecl, ArrayDecl)
 from collections import namedtuple, OrderedDict
-import enum
+import enumeration
 
 pp = pprint.PrettyPrinter(indent=4)
 
-class arch_types_enum_t(enum.Enum):
+class arch_types_enum_t(enumeration.Enum):
     M32 = 0
     M64 = 1
 
-class endian_types_enum_t(enum.Enum):
+class endian_types_enum_t(enumeration.Enum):
     LittleEndian=0
-    BigEndian=0
+    BigEndian=1
 
-class type_t(enum.Enum):
+class type_t(enumeration.Enum):
     basic = 0
     array = 1
     pointer = 2
@@ -59,7 +59,7 @@ class struct_parser_t:
         self.is_32bit = self.arch==arch_types_enum_t.M32
         self.word_size = 4 if self.arch==arch_types_enum_t.M32 else 8
         self.max_align = self.word_size
-        self.endian = endian
+        self.isTargetBigEndian = True if endian==endian_types_enum_t.BigEndian else False
         self.__update_basic_types__()
         self.ast = parse_file(c_file, use_cpp=True)
         for ext in self.ast.ext:
@@ -75,7 +75,7 @@ class struct_parser_t:
         return num % self.word
 
     def set_endianness(self, endian):
-        self.endian = endian
+        self.isTargetBigEndian = True if endian==endian_types_enum_t.BigEndian else False
 
     def wordBytesLeft(self, offset):
         offset = offset % self.word
@@ -266,6 +266,8 @@ class struct_parser_t:
                     return self.finalizeType(sub_t_obj)
                 elif t_obj.type_id==type_t.struct:
                     return self.parser_types[t_obj.name]
+                elif t_obj.type_id==type_t.array:
+                    return t_obj;
                 else:
                     set_trace()
                     assert 0, "What is this"
@@ -375,18 +377,14 @@ class struct_parser_t:
         return t_obj
 
     def get_basic_value(self, byte_array, byte_offset, basic_type_name):
-        if self.endian==endian_types_enum_t.LittleEndian:
-            
-        else:
-            set_trace()
-            pass
+        pass
 
     def unpack_as_type(self, byte_array, type_name):
         t_obj = self.get_actual_type(type_name)
         assert t_obj.size != None and t_obj.size >= 0, "Error in typename"
         assert len(byte_array) >= t_obj.size, "Input size is less than type size"
         if t_obj.type_id==type_t.struct:
-            for field in t_obj.info.
+            pass;
         else:
             set_trace()
             pass
