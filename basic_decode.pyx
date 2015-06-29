@@ -11,11 +11,11 @@ hostWordSize    = int(re.findall("[0-9]+", platform.architecture()[0])[0]);
 def decode_as_nbytes_number(unsigned char *data_ptr, unsigned char nbytes, unsigned char isSigned,
                              unsigned char targetWordSize, 
                              unsigned char isTargetLittleEndian):
-    printf("data_ptr            = %p \n", data_ptr)
-    printf("nbytes              = %u \n", nbytes)
-    printf("isSigned            = %u \n", isSigned)
-    printf("targetWordSize      = %u \n", targetWordSize)
-    printf("isTargetLittleEndian   = %u \n", isTargetLittleEndian)
+#    printf("data_ptr            = %p \n", data_ptr)
+#    printf("nbytes              = %u \n", nbytes)
+#    printf("isSigned            = %u \n", isSigned)
+#    printf("targetWordSize      = %u \n", targetWordSize)
+#    printf("isTargetLittleEndian   = %u \n", isTargetLittleEndian)
     if nbytes==1:
         if isSigned:
             return (<signed char *>data_ptr)[0]
