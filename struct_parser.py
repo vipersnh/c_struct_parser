@@ -8,16 +8,9 @@ from pycparser.c_ast import (Typedef, TypeDecl, Typename, Struct, Enum, Constant
 from collections import namedtuple, OrderedDict
 import enumeration
 from basic_decode import *
+from target_defs import *
 
 pp = pprint.PrettyPrinter(indent=4)
-
-class arch_types_enum_t(enumeration.Enum):
-    M32 = 0
-    M64 = 1
-
-class endian_types_enum_t(enumeration.Enum):
-    LittleEndian=0
-    BigEndian=1
 
 class type_t(enumeration.Enum):
     basic = 0
@@ -52,18 +45,22 @@ def form_type_info(type_info_type, name, size, align=None, info=None, ):
             info)
     
 class struct_parser_t:
+    basic_decode = None
     parser_types = OrderedDict()
     inst_vars  = OrderedDict()
     parser_ctypes_spec = OrderedDict()
     def __init__(self, c_file, arch=arch_types_enum_t.M32,
             endian=endian_types_enum_t.LittleEndian):
         self.c_file = c_file
+        self.target_arch = arch
+        self.target_endian = endian
         self.target_is_64bit = arch==arch_types_enum_t.M64
         self.target_is_32bit = arch==arch_types_enum_t.M32
         self.target_word_size = 4 if arch==arch_types_enum_t.M32 else 8
         self.target_max_align = self.target_word_size
         self.isTargetLittleEndian = True if endian==endian_types_enum_t.LittleEndian else False
         self.ast = parse_file(c_file, use_cpp=True)
+        self.basic_decoder = basic_decode_t(endian, arch)
         self.update_defs()
   
     def update_defs(self):
@@ -76,12 +73,15 @@ class struct_parser_t:
             else:
                 t_obj = self.get_type_info(ext)
                 self.parser_types[t_obj.name] = t_obj
+        self.basic_decoder = basic_decode_t(self.target_endian, self.target_arch)
         
 
     def isWordAligned(self, num):
         return num % self.word
 
     def set_arch_n_endianness(self, arch, endian):
+        self.target_arch = arch
+        self.target_endian = endian
         self.target_is_64bit = arch==arch_types_enum_t.M64
         self.target_is_32bit = arch==arch_types_enum_t.M32
         self.isTargetLittleEndian = True if endian==endian_types_enum_t.LittleEndian else False
@@ -390,16 +390,18 @@ class struct_parser_t:
         return t_obj
 
     def get_basic_value(self, byte_array, t_obj):
-        if t_obj.name in ["float", "double", "long double"]:
-            set_trace()
-            # TODO
-        isSigned = False
-        if t_obj.name in ["char", "signed char", "short", "signed short", "short int",
-            "signed short int", "int", "signed int", "long", "signed long", "long int", "signed long int",
-            "long long", "signed long long"]:
-            isSigned = True
-        value = decode_as_nbytes_number(byte_array, t_obj.size, isSigned,
-                             self.target_word_size, self.isTargetLittleEndian)
+
+#        if t_obj.name in ["float", "double", "long double"]:
+#            set_trace()
+#            # TODO
+#        isSigned = False
+#        if t_obj.name in ["char", "signed char", "short", "signed short", "short int",
+#            "signed short int", "int", "signed int", "long", "signed long", "long int", "signed long int",
+#            "long long", "signed long long"]:
+#            isSigned = True
+#        value = decode_as_nbytes_number(byte_array, t_obj.size, isSigned,
+#                             self.target_word_size, self.isTargetLittleEndian)
+        value = self.basic_decoder.f_dict[t_obj.name](byte_array)
         return [unpack_info_t(None, t_obj.size, t_obj.name, value), byte_array[t_obj.size:]]
 
     def unpack_as_type(self, byte_array, type_name=None, t_obj = None):
