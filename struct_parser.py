@@ -9,6 +9,7 @@ from collections import namedtuple, OrderedDict
 import enumeration
 from basic_decode import *
 from target_defs import *
+from dict_struct  import dict_struct_t
 
 pp = pprint.PrettyPrinter(indent=4)
 
@@ -21,11 +22,14 @@ class type_t(enumeration.Enum):
     struct = 6
     union = 7
 
+class signed_t(enumeration.Enum):
+    signed = 0
+    unsigned = 1
 
 inst_info_t = namedtuple("inst_info_t", ["name", "qualifier", "type", "values"])
 value_info_t = namedtuple("value_info_t", ["qualifier", "value"])
-type_info_t = namedtuple("type_info_t", ["type_id", "name", "size", "align", "info"])
-array_info_t = namedtuple("array_into_t", ["array_count", "array_type"]);
+type_info_t = namedtuple("type_info_t", ["type_id", "name", "size", "sign", "align", "info"])
+array_info_t = namedtuple("array_info_t", ["array_count", "array_type"]);
 ptr_info_t  = namedtuple("ptr_info_t", ["actual_type"])
 typedef_info_t = namedtuple("typedef_info_t", ["actual_type"])
 enum_info_t   = namedtuple("enum_info_t", ["enum_dict"])
@@ -36,17 +40,23 @@ struct_field_into_t = namedtuple("struct_field_into_t", ["var_name", "size", "by
 
 unpack_info_t = namedtuple("unpack_info_t", ["var_name", "size", "type_name", "value"]);
 
-def form_type_info(type_info_type, name, size, align=None, info=None, ):
-    if align != None and align > 8:
-        set_trace()
-        pass
-    return type_info_t(type_info_type, name, size, 
+def form_type_info(type_info_type, name, size, sign=None, align=None, info=None):
+    try:
+        if align != None and align > 8:
+            set_trace()
+            pass
+    except:
+        set_trace(); pass
+    return type_info_t(type_info_type, name, size, sign,
             size if align==None else align, 
             info)
     
 class struct_parser_t:
+    trace_bytes = None
+    trace_byte_idx = 0
     basic_decode = None
     parser_types = OrderedDict()
+    parser_undefined_types = OrderedDict()
     inst_vars  = OrderedDict()
     parser_ctypes_spec = OrderedDict()
     def __init__(self, c_file, arch=arch_types_enum_t.M32,
@@ -63,6 +73,10 @@ class struct_parser_t:
         self.basic_decoder = basic_decode_t(endian, arch)
         self.update_defs()
   
+    def set_trace_bytes(self, trace_bytes, trace_byte_idx):
+        self.trace_bytes    = trace_bytes
+        self.trace_byte_idx = trace_byte_idx
+
     def update_defs(self):
         self.__update_basic_types__()
         for ext in self.ast.ext:
@@ -74,7 +88,29 @@ class struct_parser_t:
                 t_obj = self.get_type_info(ext)
                 self.parser_types[t_obj.name] = t_obj
         self.basic_decoder = basic_decode_t(self.target_endian, self.target_arch)
-        
+        self.update_empty_defs()
+
+    def update_empty_defs(self):
+        for t_name in self.parser_types.keys():
+            t_obj = self.parser_types[t_name]
+            if t_obj.size==None:
+                rmKey = False
+                if t_obj.type_id==type_t.typedef:
+                    defined_type = t_obj.info.actual_type.name
+                    act_t_obj = self.parser_types[defined_type]
+                    if act_t_obj.size==None:
+                        # Remove key from dict and put in undefined 
+                        rmKey = True
+                    else:
+                        self.parser_types[t_name] = type_info_t(t_obj.type_id, 
+                            t_obj.name, act_t_obj.size, act_t_obj.sign, act_t_obj.align,
+                            typedef_info_t(act_t_obj))
+                else:
+                    rmKey = True
+                
+                if rmKey:
+                    self.parser_types.pop(t_name, None)
+                    self.parser_undefined_types[t_name] = t_obj
 
     def isWordAligned(self, num):
         return num % self.word
@@ -92,33 +128,33 @@ class struct_parser_t:
         return self.word - offset
 
     def __update_basic_types__(self):
-        self.parser_types["__ptr__"] = form_type_info(type_t.basic, "__ptr__", 8 if self.target_is_64bit else 4)
-        self.parser_types["enum"] = form_type_info(type_t.basic, "enum", 4) # Check this later
-        self.parser_types["void"] = form_type_info(type_t.basic, "void", 0)
-        self.parser_types["char"] = form_type_info(type_t.basic, "char", 1)
-        self.parser_types["signed char"] = form_type_info(type_t.basic, "signed char", 1)
-        self.parser_types["unsigned char"] = form_type_info(type_t.basic, "unsigned char", 1)
-        self.parser_types["short"] = form_type_info(type_t.basic, "short", 2)
-        self.parser_types["signed short"] = form_type_info(type_t.basic, "signed short", 2)
-        self.parser_types["unsigned short"] = form_type_info(type_t.basic, "unsigned short", 2)
-        self.parser_types["short int"] = form_type_info(type_t.basic, "short", 2)
-        self.parser_types["signed short int"] = form_type_info(type_t.basic, "signed short", 2)
-        self.parser_types["unsigned short int"] = form_type_info(type_t.basic, "unsigned short", 2)
-        self.parser_types["int"] = form_type_info(type_t.basic, "int", 4)
-        self.parser_types["signed int"] = form_type_info(type_t.basic, "signed int", 4)
-        self.parser_types["unsigned int"] = form_type_info(type_t.basic, "unsigned int", 4)
-        self.parser_types["long"] = form_type_info(type_t.basic, "long", 8 if self.target_is_64bit else 4)
-        self.parser_types["signed long"] = form_type_info(type_t.basic, "signed long", 8 if self.target_is_64bit else 4)
-        self.parser_types["unsigned long"] = form_type_info(type_t.basic, "unsigned long", 8 if self.target_is_64bit else 4)
-        self.parser_types["long int"] = form_type_info(type_t.basic, "long", 8 if self.target_is_64bit else 4)
-        self.parser_types["signed long int"] = form_type_info(type_t.basic, "signed long", 8 if self.target_is_64bit else 4)
-        self.parser_types["unsigned long int"] = form_type_info(type_t.basic, "unsigned long", 8 if self.target_is_64bit else 4)
-        self.parser_types["long long"] = form_type_info(type_t.basic, "long long", 8)
-        self.parser_types["signed long long"] = form_type_info(type_t.basic, "signed long long", 8)
-        self.parser_types["unsigned long long"] = form_type_info(type_t.basic, "unsigned long long", 8)
-        self.parser_types["float"] = form_type_info(type_t.basic, "float", 4)
-        self.parser_types["double"] = form_type_info(type_t.basic, "double", 8, align=4)
-        self.parser_types["long double"] = form_type_info(type_t.basic, "long double", 12, align=4)
+        self.parser_types["__ptr__"]                = form_type_info(type_t.basic, "__ptr__", 8 if self.target_is_64bit else 4)
+        self.parser_types["enum"]                   = form_type_info(type_t.basic, "enum", 4) # Check this later
+        self.parser_types["void"]                   = form_type_info(type_t.basic, "void", 0)
+        self.parser_types["char"]                   = form_type_info(type_t.basic, "char", 1, signed_t.signed)
+        self.parser_types["signed char"]            = form_type_info(type_t.basic, "signed char", 1, signed_t.signed)
+        self.parser_types["unsigned char"]          = form_type_info(type_t.basic, "unsigned char", 1, signed_t.unsigned)
+        self.parser_types["short"]                  = form_type_info(type_t.basic, "short", 2, signed_t.signed)
+        self.parser_types["signed short"]           = form_type_info(type_t.basic, "signed short", 2, signed_t.signed)
+        self.parser_types["unsigned short"]         = form_type_info(type_t.basic, "unsigned short", 2, signed_t.unsigned)
+        self.parser_types["short int"]              = form_type_info(type_t.basic, "short", 2, signed_t.signed)
+        self.parser_types["signed short int"]       = form_type_info(type_t.basic, "signed short", 2, signed_t.signed)
+        self.parser_types["unsigned short int"]     = form_type_info(type_t.basic, "unsigned short", 2, signed_t.unsigned)
+        self.parser_types["int"]                    = form_type_info(type_t.basic, "int", 4, signed_t.signed)
+        self.parser_types["signed int"]             = form_type_info(type_t.basic, "signed int", 4, signed_t.signed)
+        self.parser_types["unsigned int"]           = form_type_info(type_t.basic, "unsigned int", 4, signed_t.unsigned)
+        self.parser_types["long"]                   = form_type_info(type_t.basic, "long", 8 if self.target_is_64bit else 4, signed_t.signed)
+        self.parser_types["signed long"]            = form_type_info(type_t.basic, "signed long", 8 if self.target_is_64bit else 4, signed_t.signed)
+        self.parser_types["unsigned long"]          = form_type_info(type_t.basic, "unsigned long", 8 if self.target_is_64bit else 4, signed_t.unsigned)
+        self.parser_types["long int"]               = form_type_info(type_t.basic, "long", 8 if self.target_is_64bit else 4, signed_t.signed)
+        self.parser_types["signed long int"]        = form_type_info(type_t.basic, "signed long", 8 if self.target_is_64bit else 4, signed_t.signed)
+        self.parser_types["unsigned long int"]      = form_type_info(type_t.basic, "unsigned long", 8 if self.target_is_64bit else 4, signed_t.unsigned)
+        self.parser_types["long long"]              = form_type_info(type_t.basic, "long long", 8, signed_t.signed)
+        self.parser_types["signed long long"]       = form_type_info(type_t.basic, "signed long long", 8, signed_t.signed)
+        self.parser_types["unsigned long long"]     = form_type_info(type_t.basic, "unsigned long long", 8, signed_t.unsigned)
+        self.parser_types["float"]                  = form_type_info(type_t.basic, "float", 4, signed_t.signed)
+        self.parser_types["double"]                 = form_type_info(type_t.basic, "double", 8, signed_t.signed, align=4)
+        self.parser_types["long double"]            = form_type_info(type_t.basic, "long double", 12, signed_t.signed, align=4)
         
 
     def get_type_info(self, ext):
@@ -136,7 +172,7 @@ class struct_parser_t:
             size = t_obj.size
             align = t_obj.align
 
-            return form_type_info(type_t.typedef, name, size, align, info)
+            return form_type_info(type_t.typedef, name, size, t_obj.sign, align, info)
         elif type(ext)==Enum:
             enumList = ext.values.enumerators
             enum_dict = OrderedDict()
@@ -148,10 +184,10 @@ class struct_parser_t:
                         enum_val = int(op+item.value.expr.value, 0)
                     elif type(item.value)==Constant:
                         enum_val = int(item.value.value, 0)
-                enum_dict[item.name] = enum_val
+                enum_dict[enum_val] = item.name
                 enum_val += 1
             return form_type_info(type_t.enum, ext.name, self.parser_types["enum"].size,
-                    None, enum_info_t(enum_dict))
+                    None, None, enum_info_t(enum_dict))
         elif type(ext)==IdentifierType:
             type_name = " ".join(ext.names)
             if self.isKnownType(type_name):
@@ -189,7 +225,7 @@ class struct_parser_t:
                 else:
                     rem_bytes = self.target_max_align - (offset % self.target_max_align)
                     total_size = offset + rem_bytes
-                return form_type_info(type_t.struct, ext.name, total_size, target_max_align, 
+                return form_type_info(type_t.struct, ext.name, total_size, None, target_max_align, 
                         struct_info_t(fields))
             elif self.isKnownType(ext.name):
                 return self.parser_types[ext.name]
@@ -219,8 +255,8 @@ class struct_parser_t:
                 else:
                     rem_bytes = self.target_max_align - (offset % self.target_max_align)
                     total_size = offset + rem_bytes
-                return form_type_info(type_t.union, ext.name, total_size, target_max_align,
-                        union_info_t(fields))
+                return form_type_info(type_t.union, ext.name, total_size, None, 
+                        target_max_align, union_info_t(fields))
             elif self.isKnownType(ext.name):
                 return self.parser_types[ext.name]
             else:
@@ -236,7 +272,7 @@ class struct_parser_t:
             name = t_obj.name
             size = 8 if self.target_is_64bit else 4
             info = ptr_info_t(t_obj)
-            return form_type_info(type_t.pointer, name, size, None, info)
+            return form_type_info(type_t.pointer, name, size, None, None, info)
         elif type(ext)==ArrayDecl:
             array_count = 0;
             if ext.dim:
@@ -249,7 +285,7 @@ class struct_parser_t:
             except:
                 set_trace()
                 pass
-            return form_type_info(type_t.array, "", size, align, array_info_t(array_count, array_type))
+            return form_type_info(type_t.array, "", size, None, align, array_info_t(array_count, array_type))
         else:
             set_trace();
             assert 0, "Code this condition"
@@ -292,7 +328,7 @@ class struct_parser_t:
         type_obj = None
         declname = ext.name
         try:
-            t_obj = self.get_actual_type(" ".join(ext.type.type.names))
+            [orig_t_obj, t_obj] = self.get_actual_type(" ".join(ext.type.type.names))
         except:
             return None
         if ext.quals:
@@ -322,7 +358,7 @@ class struct_parser_t:
                         set_trace()
                         values.append(inst_info_t(field.var_name, None, field.type, 
                             None))
-                return inst_info_t(declname, qualifier, t_obj, values)
+                return inst_info_t(declname, qualifier, orig_t_obj, values)
         elif t_obj.type_id==type_t.basic:
             if ext.init:
                 init = ext.init.exprs[0]
@@ -330,7 +366,7 @@ class struct_parser_t:
                 [name, sub_init] = self.get_init_value(init)
             else:
                 # Uninitialized declaration
-                return inst_info_t(declname, qualifier, t_obj, None)
+                return inst_info_t(declname, qualifier, orig_t_obj, None)
 
     def get_init_value(self, init):
         name = None
@@ -384,44 +420,95 @@ class struct_parser_t:
             pass
     def get_actual_type(self, type_name=None, t_obj=None):
         if t_obj==None:
-            t_obj = self.parser_types[type_name];
+            orig_t_obj = t_obj = self.parser_types[type_name]
+        else:
+            orig_t_obj = t_obj
         while t_obj.type_id==type_t.typedef:
-            t_obj = t_obj.info.actual_type
-        return t_obj
+            try:
+                t_obj = t_obj.info.actual_type
+            except:
+                set_trace()
+                pass
+        return [orig_t_obj, t_obj]
 
-    def get_basic_value(self, byte_array, t_obj):
+    def get_basic_value(self, t_obj, n_elem=1):
+        if n_elem==1:
+            value = self.basic_decoder.f_dict[t_obj.name](self.trace_bytes[self.trace_byte_idx:])
+            self.trace_byte_idx += t_obj.size
+        else:
+            value = []
+            for idx in range(n_elem):
+                try:
+                    value.append(self.basic_decoder.f_dict[t_obj.name](self.trace_bytes[self.trace_byte_idx:]))
+                    self.trace_byte_idx += t_obj.size
+                except:
+                    set_trace()
+        return unpack_info_t(None, t_obj.size, t_obj.name, value)
 
-#        if t_obj.name in ["float", "double", "long double"]:
-#            set_trace()
-#            # TODO
-#        isSigned = False
-#        if t_obj.name in ["char", "signed char", "short", "signed short", "short int",
-#            "signed short int", "int", "signed int", "long", "signed long", "long int", "signed long int",
-#            "long long", "signed long long"]:
-#            isSigned = True
-#        value = decode_as_nbytes_number(byte_array, t_obj.size, isSigned,
+#    def get_basic_value(self, byte_array, t_obj, n_elem=1):
+#        if t_obj.name in ["char", "signed char"] :
+#            if n_elem > 1:
+#                value = byte_array[0:t_obj.size*n_elem].split(
+#                            b'\x00')[0].split(b'\x00')[0].decode()
+#            else:
+#                value = byte_array[0:t_obj.size*n_elem]
+#        elif t_obj.name in ["void", "float", "double", "long double"]:
+#            set_trace(); pass
+#        else:
+#            isSigned = True if t_obj.sign==signed_t.signed else False
+#            if n_elem==1:
+#                value = decode_as_nbytes_number(byte_array, t_obj.size, isSigned,
 #                             self.target_word_size, self.isTargetLittleEndian)
-        value = self.basic_decoder.f_dict[t_obj.name](byte_array)
-        return [unpack_info_t(None, t_obj.size, t_obj.name, value), byte_array[t_obj.size:]]
+#            else:
+#                value = []
+#                for idx in range(n_elem):
+#                    value.append(decode_as_nbytes_number(byte_array, t_obj.size, isSigned,
+#                             self.target_word_size, self.isTargetLittleEndian))
+#        return [unpack_info_t(None, t_obj.size*n_elem, t_obj.name, value), byte_array[t_obj.size*n_elem:]]
 
-    def unpack_as_type(self, byte_array, type_name=None, t_obj = None):
-        t_obj = self.get_actual_type(type_name, t_obj)
-        print("Tname={0}, Tid={1}, typename={2},".format(t_obj.name, t_obj.type_id, type_name))
+    def unpack_as_type(self, type_name=None, t_obj = None, count=1):
+        if count > 1:
+            [_, t_obj] = self.get_actual_type(type_name, t_obj)
+            array_t_obj = array_info_t(count, t_obj)
+            return self.unpack_as_type(type_name, form_type_info(type_t.array, "", count*t_obj.size,
+                        info=array_t_obj))
+    
+        [orig_t_obj, t_obj] = self.get_actual_type(type_name, t_obj)
+#        print("Tname={0}, Tid={1}, typename={2},".format(t_obj.name, t_obj.type_id, type_name))
         assert t_obj.size != None and t_obj.size >= 0, "Error in typename"
-        assert len(byte_array) >= t_obj.size, "Input size is less than type size"
         if t_obj.type_id==type_t.struct:
             value = [];
+            trace_byte_idx_old = self.trace_byte_idx
             for field in t_obj.info.fields:
-                [unpack_info, _] = self.unpack_as_type(byte_array[field.byte_offset:], t_obj = field.type);
+                self.trace_byte_idx = trace_byte_idx_old + field.byte_offset
+                unpack_info = self.unpack_as_type(None, field.type)
                 value.append(unpack_info_t(field.var_name, unpack_info.size, unpack_info.type_name, 
                     unpack_info.value))
-            return [unpack_info_t(None, t_obj.size, type_name, value), byte_array[t_obj.size:]]
+            self.trace_byte_idx = trace_byte_idx_old + t_obj.size
+            return unpack_info_t(None, t_obj.size, type_name, value)
         elif t_obj.type_id==type_t.basic:
-            return self.get_basic_value(byte_array, t_obj)
+            return self.get_basic_value(t_obj)
         elif t_obj.type_id==type_t.pointer:
             t_obj = self.parser_types["__ptr__"];
-            [unpack_info, byte_array] = self.get_basic_value(byte_array, t_obj);
-            return [unpack_info_t(None, unpack_info.size, unpack_info.type_name, unpack_info.value), byte_array]
+            unpack_info = self.get_basic_value(t_obj)
+            return unpack_info_t(None, unpack_info.size, unpack_info.type_name, unpack_info.value)
+        elif t_obj.type_id==type_t.enum:
+            t_obj_enum = self.parser_types["int"] # Decode as normal int value 
+            unpack_info = self.get_basic_value(t_obj_enum)
+            return unpack_info_t(None, unpack_info.size, t_obj.name, t_obj.info[0][unpack_info.value])
+        elif t_obj.type_id==type_t.array:
+            [_, act_t_obj] = self.get_actual_type(t_obj=t_obj.info.array_type)
+            if act_t_obj.type_id==type_t.basic:
+                return self.get_basic_value(act_t_obj, t_obj.info.array_count)
+            else:
+                value = []
+                for idx in range(t_obj.info.array_count):
+                    unpack_info = self.unpack_as_type(t_obj=act_t_obj)
+                    value.append(unpack_info)
+                return unpack_info_t(None, t_obj.size, t_obj.name, value)
+        else:
+            set_trace()
+            pass
 
 
     def sizeof(self, type_name):
@@ -431,10 +518,10 @@ class struct_parser_t:
     def pretty_print(self, unpack_info, ts=0):
         op_ts = " "*ts if ts else ""
         try:
-            t_obj = self.get_actual_type(unpack_info.type_name);
+            [orig_t_obj, t_obj] = self.get_actual_type(unpack_info.type_name);
         except:
             set_trace()
-            t_obj = self.get_actual_type(unpack_info.type_name);
+            [orig_t_obj, t_obj] = self.get_actual_type(unpack_info.type_name);
             pass
         op = op_ts;
         if t_obj.type_id==type_t.struct:
@@ -446,3 +533,19 @@ class struct_parser_t:
         elif t_obj.type_id==type_t.basic:
             op += unpack_info.type_name + " " + unpack_info.var_name + " = " + hex(unpack_info.value) + "\n";
             return op
+
+    def unpack_info_to_struct(self, unpack_info):
+        struct = dict_struct_t();
+        if type(unpack_info.value)==list:
+            if type(unpack_info.value[0])==int:
+                return unpack_info.value
+            else:
+                for value in unpack_info.value:
+                    if value.var_name:
+                        struct.__setattr__(value.var_name, self.unpack_info_to_struct(value))
+                    else:
+                        struct.__setattr__("_unknown_", self.unpack_info_to_struct(value))
+        else:
+            return unpack_info.value
+        return struct
+
